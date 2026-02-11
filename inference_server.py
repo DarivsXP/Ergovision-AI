@@ -59,14 +59,25 @@ def predict():
         features = scaler.transform([[neck_a, back_a, 0.0]]) 
         prediction = int(model.predict(features)[0])
         
-        # 2. Score Calculation
+        # 2. Score Calculation (THE FIX: "Grace Buffer")
+        # Calculate how far they moved from the ideal
         dev = abs(back_a - ideal_back) + abs(neck_a - ideal_neck)
-        calculated_score = 100 - (dev * 2.0) 
+
+        # NEW LOGIC:
+        # If deviation is less than 8 degrees total, give them perfect score.
+        # This prevents "jitters" from ruining the score.
+        if dev < 8:
+            calculated_score = 100
+        else:
+            # If they move past 8 degrees, deduct points slowly (1.5x multiplier)
+            # We subtract 8 from dev so we only punish the EXCESS movement
+            calculated_score = 100 - ((dev - 8) * 1.5) 
         
         # 3. Blending Logic
         if prediction == 1:
-            # If AI sees "Slouch", cap the score at 85 (Warning)
-            final_score = min(calculated_score, 85)
+            # If AI sees "Slouch", cap the score at 75 (Orange/Warning)
+            # This ensures that even if angles are "okay", a slouch is still flagged.
+            final_score = min(calculated_score, 75)
         else:
             final_score = calculated_score
 
