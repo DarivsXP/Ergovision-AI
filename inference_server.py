@@ -4,6 +4,14 @@ import joblib
 import numpy as np
 import os
 
+@app.route('/', methods=['GET'])
+def keep_alive():
+    return "Ergovision AI is Awake!", 200
+# --------------------------
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    
 app = Flask(__name__)
 # Optimized CORS for fast local requests
 CORS(app, resources={r"/*": {"origins": "*"}})
