@@ -35,8 +35,6 @@ def keep_alive():
 def predict():
     try:
         data = request.json
-        
-        # Validation: Ensure we actually got data
         if not data or 'landmarks' not in data:
             return jsonify({'error': 'No landmarks provided'}), 400
 
@@ -44,59 +42,68 @@ def predict():
         ideal_back = float(data.get('ideal_back', 0))
         ideal_neck = float(data.get('ideal_neck', 0))
         
-        # Calculate Angles
-        # Note: MediaPipe landmarks are objects, so accessing ['x'] is correct
-        # if you sent them as JSON.
+        # --- VALIDATION: Is the person actually there? ---
+        # MediaPipe provides visibility (0.0 to 1.0)
+        # We check Ear (8), Shoulder (12), and Hip (24)
+        required_ids = [8, 12, 24]
+        for l_id in required_ids:
+            # Check if landmark exists and if it's visible enough (> 50%)
+            visibility = landmarks[l_id].get('visibility', 0)
+            if visibility < 0.5:
+                return jsonify({
+                    'label': 0,
+                    'score': 0,
+                    'status': 'user_not_detected',
+                    'message': 'Please align yourself with the camera'
+                })
+
+        # --- EXTRACT COORDINATES ---
         ear = [landmarks[8]['x'], landmarks[8]['y']]
         shoulder = [landmarks[12]['x'], landmarks[12]['y']]
         hip = [landmarks[24]['x'], landmarks[24]['y']]
 
+        # --- STANDING DETECTION ---
+        # If the hip is significantly higher in the frame (lower Y value), 
+        # they are likely standing or too close.
+        if hip[1] < 0.4: # Adjust 0.4 based on your camera testing
+             return jsonify({
+                'label': 0,
+                'score': 100,
+                'status': 'standing',
+                'message': 'Standing detected - Posture tracking paused'
+            })
+
+        # Calculate Angles
         neck_a = round(calculate_angle(shoulder, ear), 2)
         back_a = round(calculate_angle(hip, shoulder), 2)
 
         # 1. AI Prediction
-        # The model expects a 2D array [[f1, f2, f3]]
         features = scaler.transform([[neck_a, back_a, 0.0]]) 
         prediction = int(model.predict(features)[0])
         
-        # 2. Score Calculation (THE FIX: "Grace Buffer")
-        # Calculate how far they moved from the ideal
+        # 2. Score Calculation (FORGIVING LOGIC)
         dev = abs(back_a - ideal_back) + abs(neck_a - ideal_neck)
 
-        # NEW LOGIC:
-        # If deviation is less than 8 degrees total, give them perfect score.
-        # This prevents "jitters" from ruining the score.
-        if dev < 8:
+        # Buffer increased to 10, Multiplier dropped to 1.1
+        if dev < 10:
             calculated_score = 100
         else:
-            # If they move past 8 degrees, deduct points slowly (1.5x multiplier)
-            # We subtract 8 from dev so we only punish the EXCESS movement
-            calculated_score = 100 - ((dev - 8) * 1.5) 
+            calculated_score = 100 - ((dev - 10) * 1.1) 
         
         # 3. Blending Logic
         if prediction == 1:
-            # If AI sees "Slouch", cap the score at 75 (Orange/Warning)
-            # This ensures that even if angles are "okay", a slouch is still flagged.
             final_score = min(calculated_score, 75)
         else:
             final_score = calculated_score
 
-        # Ensure score stays between 0 and 100
         final_score = max(0, min(100, int(final_score)))
-
-        print(f"Pred: {prediction} | Score: {final_score}%")
 
         return jsonify({
             'label': prediction,
             'score': final_score,
+            'status': 'active',
             'angles': {'neck': neck_a, 'back': back_a}
         })
 
     except Exception as e:
-        print(f"Error processing request: {e}")
-        return jsonify({'error': str(e)}), 400  
-
-# 5. START SERVER
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+        return jsonify({'error': str(e)}), 400
